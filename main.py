@@ -7,7 +7,7 @@ import random
 app = FastAPI()
 
 # File names
-CHARACTER_FILE = "Suits_Characters.csv"
+CHARACTER_FILE = "Characters.csv"
 QUOTE_FILE = "quotes.csv"
 
 class CreateCharacters(BaseModel):
