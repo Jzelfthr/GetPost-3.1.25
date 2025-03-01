@@ -1,94 +1,79 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-import csv
+import pandas as pd
+import os
 import random
 
-# Initialize the FastAPI app
 app = FastAPI()
 
-# Pydantic models for input validation
-class Character(BaseModel):
-    name: str
-    age: int
-    role: str
-    faction: str
-    weapon: str
-    location: str
-    strength: int
-    intelligence: int
+# File names
+CHARACTER_FILE = "Suits_Characters.csv"
+QUOTE_FILE = "quotes.csv"
 
-class Quote(BaseModel):
-    character_name: str
-    quote: str
+class CreateCharacters(BaseModel):
+    character: str
 
-# Function to read characters from the CSV file
-def get_characters_from_csv():
-    characters = []
-    try:
-        with open('characters.csv', mode='r', newline='', encoding='utf-8') as file:
-            reader = csv.DictReader(file)
-            for row in reader:
-                characters.append(row)
-    except FileNotFoundError:
-        return []
-    return characters
-
-# Function to read quotes from the CSV file
-def get_quotes_from_csv():
-    quotes = []
-    try:
-        with open('quote.csv', mode='r', newline='', encoding='utf-8') as file:
-            reader = csv.DictReader(file)
-            for row in reader:
-                quotes.append(row)
-    except FileNotFoundError:
-        return []
-    return quotes
-
-# POST route to create a new character
 @app.post("/create_characters")
-async def create_character(character: Character):
-    # Open the CSV file in append mode and add the new character
-    with open('characters.csv', mode='a', newline='', encoding='utf-8') as file:
-        writer = csv.DictWriter(file, fieldnames=character.dict().keys())
-        # If the file is empty, write the header first
-        if file.tell() == 0:
-            writer.writeheader()
-        writer.writerow(character.dict())
-    return {"message": "Character created successfully", "character": character}
+async def create_character(character_data: CreateCharacters):
+    character = character_data.character.strip()
 
-# POST route to create a new quote
-@app.post("/create_quote")
-async def create_quote(quote: Quote):
-    # Open the CSV file in append mode and add the new quote
-    with open('quote.csv', mode='a', newline='', encoding='utf-8') as file:
-        writer = csv.DictWriter(file, fieldnames=quote.dict().keys())
-        # If the file is empty, write the header first
-        if file.tell() == 0:
-            writer.writeheader()
-        writer.writerow(quote.dict())
-    return {"message": "Quote created successfully", "quote": quote}
+    if os.path.exists(CHARACTER_FILE) and os.path.getsize(CHARACTER_FILE) > 0:
+        df = pd.read_csv(CHARACTER_FILE, on_bad_lines='skip')
+    else:
+        df = pd.DataFrame(columns=["character"])
 
-# Route to get a random quote
-@app.get("/quote")
-async def get_random_quote():
-    quotes = get_quotes_from_csv()
-    if quotes:
-        quote = random.choice(quotes)
-        return {"quote": quote}
-    return {"error": "No quotes available"}
+    if character in df["character"].values:
+        raise HTTPException(status_code=400, detail="Character already exists.")
 
-# Route to get all characters
+    new_character = pd.DataFrame([{"character": character}])
+    df = pd.concat([df, new_character], ignore_index=True)
+
+    df.drop_duplicates(subset=["character"], keep="first", inplace=True)
+    df.to_csv(CHARACTER_FILE, index=False, mode='w')
+
+    return {"msg": "Character Created!", "character": character}
+
 @app.get("/characters")
 async def get_characters():
-    characters = get_characters_from_csv()
-    return {"characters": characters}
+    if not os.path.exists(CHARACTER_FILE) or os.path.getsize(CHARACTER_FILE) == 0:
+        return {"msg": "No characters found."}
 
-# Route to get a specific character by name
+    try:
+        df = pd.read_csv(CHARACTER_FILE, on_bad_lines='skip', dtype=str)
+
+        if "character" not in df.columns:
+            return {"msg": "Invalid CSV format. Missing 'character' column."}
+
+        # Remove duplicates properly
+        character_list = df["character"].str.strip().str.title().drop_duplicates().tolist()
+        
+        return {"characters": character_list} if character_list else {"msg": "No characters found."}
+
+    except Exception as e:
+        return {"msg": f"Error reading CSV: {str(e)}"}
+
+
 @app.get("/characters/{name}")
 async def get_character(name: str):
-    characters = get_characters_from_csv()
-    character = next((c for c in characters if c["name"].lower() == name.lower()), None)
-    if character:
-        return {"character": character}
-    return {"error": "Character not found"}, 404
+    if os.path.exists(CHARACTER_FILE) and os.path.getsize(CHARACTER_FILE) > 0:
+        df = pd.read_csv(CHARACTER_FILE, on_bad_lines='skip')
+        if name in df["character"].values:
+            return {"character": name}
+        return {"msg": f"Character '{name}' not found."}
+    return {"msg": "No characters found."}
+
+@app.get("/quote")
+async def get_quote():
+    if os.path.exists(QUOTE_FILE) and os.path.getsize(QUOTE_FILE) > 0:
+        df = pd.read_csv(QUOTE_FILE, on_bad_lines='skip', encoding="ISO-8859-1")
+
+        df.columns = df.columns.str.strip()
+        print(df.head())
+        column_name = "quotes" if "quotes" in df.columns else "quote"
+        
+        if not df.empty and column_name in df.columns:
+            quotes_list = df[column_name].dropna().tolist()
+            if quotes_list:
+                return {"quote": random.choice(quotes_list)}
+
+    return {"msg": "No quotes available."}
